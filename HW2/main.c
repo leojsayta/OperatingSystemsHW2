@@ -19,16 +19,26 @@
 #define NUM_READS 200
 #define NUM_WRITES 200
 
-//#define SEMTYPE
 
-int readerCount;             // number of threads reading or wanting to read
+/******************************* -- IMPORTANT!!!!!!!! -- ********************************************
+ Unamed semaphores are not implemented in OSX.  Thus sem_init, sem_destroy, do not work in OSX.
+ In addition, sem_getvalue is also not implemented in OSX.
+ In order to use semaphores in OSX, they must be named semaphores.
+ i.e. sem_open, sem_close, and sem_unlink.
+ ******************************* -- IMPORTANT!!!!!!!! -- ********************************************/
+
+
+#define SEMTYPE             // comment out to use all pthread_mutex_t and no sem_t
+                            // leave uncommented to use combination of pthread_mutex_t and sem_t
+
+int readerCount;                        // number of threads reading or wanting to read
 pthread_mutex_t readerCountMutex;      // the mutual exclusion semaphore for the readerCount
 
 int isWriterWaiting;
 pthread_cond_t readerWait;
 
 #ifdef SEMTYPE
-sem_t* bufferSem;          // mutual exclusion semaphore for the "shared buffer"
+sem_t* bufferSem;                     // mutual exclusion semaphore for the "shared buffer"
 #else
 pthread_mutex_t bufferMutex;          // mutual exclusion semaphore for the "shared buffer"
 #endif
@@ -47,13 +57,13 @@ void* writerCode(void* a)
     int count;
     for (count = 0; count < NUM_WRITES; count++)
     {
-        
-
 #ifdef SEMTYPE
+        isWriterWaiting = 1;
         sem_wait(bufferSem);
 //        printf("The writer (pre sharedBuffer incr) bufferSem value is %d.\n", sem_getvalue(bufferSem, &semVal));
 #else
-        if (pthread_mutex_trylock(&bufferMutex)) {
+        if (pthread_mutex_trylock(&bufferMutex))
+        {
             isWriterWaiting = 1;
             pthread_mutex_lock(&bufferMutex);
         }
@@ -69,7 +79,7 @@ void* writerCode(void* a)
         sem_post(bufferSem);
 //        printf("The writer (post sharedBuffer incr) bufferSem value is %d.\n", sem_getvalue(bufferSem, &semVal));
 #else
-        pthread_mutex_unlock(&bufferMutex);        
+        pthread_mutex_unlock(&bufferMutex);
 #endif
         nanosleep(&ts, NULL);
     }
@@ -80,11 +90,11 @@ void* writerCode(void* a)
 void* readerCode(void* a)
 {
     int argumentValue = *((int *) a) + 1; // dereference to obtain argument value
-    //printf("Greetings from Reader: %d.\n", argumentValue);
+//    printf("Greetings from Reader: %d.\n", argumentValue);
     
-//    struct timespec ts;
-//    ts.tv_sec = 0;
-//    ts.tv_nsec = 25000;
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 25000;
 //    int semVal = 0;
 
     int count;
@@ -106,7 +116,7 @@ void* readerCode(void* a)
         }
         
         readerCount = readerCount + 1;
-        //        printf("The ++readerCount is %d.\n", readerCount);
+//        printf("The ++readerCount is %d.\n", readerCount);
         
         pthread_mutex_unlock(&readerCountMutex);
         
@@ -122,7 +132,7 @@ void* readerCode(void* a)
         {
 #ifdef SEMTYPE
             sem_post(bufferSem);
-            //            printf("The reader bufferSem value (post-read) is %d.\n", sem_getvalue(bufferSem, &semVal));
+//            printf("The reader bufferSem value (post-read) is %d.\n", sem_getvalue(bufferSem, &semVal));
 #else
             pthread_mutex_unlock(&bufferMutex);            
 #endif
@@ -144,8 +154,17 @@ int main()
     pthread_cond_init(&readerWait, 0);
 
 #ifdef SEMTYPE
-    bufferSem = sem_open("bufferSem", O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, 1);
-//    sem_init(&bufferSem, 0, 1);
+    if ((bufferSem = sem_open("/semBuffer", O_CREAT, 0644, 1)) == SEM_FAILED )
+    {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+    
+//    bufferSem = sem_open("semBuffer", O_CREAT, S_IRUSR|S_IWUSR, 0);
+//    if(bufferSem == SEM_FAILED) {
+//        perror("child sem_open");
+//        return -1;
+//    }
 #else
     pthread_mutex_init(&bufferMutex, 0);    
 #endif
@@ -171,7 +190,15 @@ int main()
     pthread_cond_destroy(&readerWait);
     
 #ifdef SEMTYPE
-    sem_close(bufferSem);
+    if (sem_close(bufferSem) == -1) {
+        perror("sem_close");
+        exit(EXIT_FAILURE);
+    }
+    
+    if (sem_unlink("/semBuffer") == -1) {
+        perror("sem_unlink");
+        exit(EXIT_FAILURE);
+    }
 #else
     pthread_mutex_destroy(&bufferMutex);    
 #endif
