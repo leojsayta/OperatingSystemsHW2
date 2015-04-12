@@ -32,15 +32,15 @@
                             // leave uncommented to use combination of pthread_mutex_t and sem_t
 
 int readerCount;                        // number of threads reading or wanting to read
-pthread_mutex_t readerCountMutex;      // the mutual exclusion semaphore for the readerCount
+pthread_mutex_t readerCountMutex;      // the mutex for the readerCount
 
-int isWriterWaiting;
-pthread_cond_t readerWait;
+int isWriterWaiting;                  // if writer is waiting signal readers to start blocking
+pthread_cond_t readerWait;            // until writer is finished
 
 #ifdef SEMTYPE
 sem_t* bufferSem;                     // mutual exclusion semaphore for the "shared buffer"
 #else
-pthread_mutex_t bufferMutex;          // mutual exclusion semaphore for the "shared buffer"
+pthread_mutex_t bufferMutex;          // mutex for the "shared buffer"
 #endif
 
 int sharedBuffer;           // the "shared buffer" is an int starting at 0.
@@ -49,10 +49,11 @@ int sharedBuffer;           // the "shared buffer" is an int starting at 0.
 
 void* writerCode(void* a)
 {
-    struct timespec ts;
+    struct timespec ts;     // These are for enabling a snooze time for the thread
     ts.tv_sec = 0;
     ts.tv_nsec = 25000;
-//    int semVal = 0;
+    
+//    int semVal = 0;       // value to hold the semaphore value retrieved using sem_getvalue
     
     int count;
     for (count = 0; count < NUM_WRITES; count++)
@@ -81,7 +82,7 @@ void* writerCode(void* a)
 #else
         pthread_mutex_unlock(&bufferMutex);
 #endif
-        nanosleep(&ts, NULL);
+        nanosleep(&ts, NULL);   // leave uncommented to enable thread snoozing
     }
     
     pthread_exit(0);
@@ -90,22 +91,22 @@ void* writerCode(void* a)
 void* readerCode(void* a)
 {
     int argumentValue = *((int *) a) + 1; // dereference to obtain argument value
-//    printf("Greetings from Reader: %d.\n", argumentValue);
     
-    struct timespec ts;
+    struct timespec ts;     // These are for enabling a snooze time for the thread
     ts.tv_sec = 0;
     ts.tv_nsec = 25000;
-//    int semVal = 0;
+    
+//    int semVal = 0;       // value to hold the semaphore value retrieved using sem_getvalue
 
     int count;
     for (count = 0; count < NUM_READS; count++)
     {
         pthread_mutex_lock(&readerCountMutex);
         
-        while (isWriterWaiting)
-            pthread_cond_wait(&readerWait, &readerCountMutex);
+        while (isWriterWaiting)                                 // if writer is waiting
+            pthread_cond_wait(&readerWait, &readerCountMutex);  // signal incoming readers to block until writer is finished
         
-        if (readerCount == 0)
+        if (readerCount == 0)       //readers reading -> writer must block
         {
 #ifdef SEMTYPE
             sem_wait(bufferSem);
@@ -116,7 +117,6 @@ void* readerCode(void* a)
         }
         
         readerCount = readerCount + 1;
-//        printf("The ++readerCount is %d.\n", readerCount);
         
         pthread_mutex_unlock(&readerCountMutex);
         
@@ -126,9 +126,8 @@ void* readerCode(void* a)
         pthread_mutex_lock(&readerCountMutex);
         
         readerCount = readerCount - 1;
-//        printf("The --readerCount is %d.\n\n", readerCount);
         
-        if (readerCount == 0)
+        if (readerCount == 0)       // no more readers reading -> safe for writer to resume
         {
 #ifdef SEMTYPE
             sem_post(bufferSem);
@@ -139,7 +138,7 @@ void* readerCode(void* a)
         }
 
         pthread_mutex_unlock(&readerCountMutex);
-//        nanosleep(&ts, NULL);
+//        nanosleep(&ts, NULL);   // leave uncommented to enable thread snoozing
     }
     
     pthread_exit(0);
@@ -154,17 +153,11 @@ int main()
     pthread_cond_init(&readerWait, 0);
 
 #ifdef SEMTYPE
-    if ((bufferSem = sem_open("/semBuffer", O_CREAT, 0644, 1)) == SEM_FAILED )
+    if ((bufferSem = sem_open("/semBuffer", O_CREAT, 0644, 1)) == SEM_FAILED )  // create named semaphore
     {
         perror("sem_open");
         exit(EXIT_FAILURE);
     }
-    
-//    bufferSem = sem_open("semBuffer", O_CREAT, S_IRUSR|S_IWUSR, 0);
-//    if(bufferSem == SEM_FAILED) {
-//        perror("child sem_open");
-//        return -1;
-//    }
 #else
     pthread_mutex_init(&bufferMutex, 0);    
 #endif
@@ -176,7 +169,7 @@ int main()
     int count;
     for (count = 0; count < NUM_OF_READERS; count++)
     {
-        // we have the use dumanic memory allocation to declare an argument var
+        // we have the use dymanic memory allocation to declare an argument var
         int *reader = (int *) malloc(sizeof(int *));
         *reader = count; // we wish to pass int value 5 as the argument to the thread
         pthread_create(&readerThread[count], 0, readerCode, (void *) reader);
